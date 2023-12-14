@@ -3,6 +3,7 @@ gpus: [0, 1, 2, 3]
 exp_name: 'dtu_pretrain'
 
 # module
+#* 下面这些 module 对应了指定路径的文件或函数。调用接口都是一致的，只是实现不同
 train_dataset_module: lib.datasets.dtu.enerf
 test_dataset_module: lib.datasets.dtu.enerf
 network_module: lib.networks.enerf.network
@@ -11,21 +12,21 @@ evaluator_module: lib.evaluators.enerf
 visualizer_module: lib.visualizers.enerf
 
 save_result: False
-eval_lpips: True
+eval_lpips: True # 是否评估 LPIPS（图像质量评价指标）
 
 # task config
 enerf:
     train_input_views: [2, 3, 4]
     train_input_views_prob: [0.1, 0.8, 0.1]
     test_input_views: 3
-    viewdir_agg: True 
-    chunk_size: 1000000
+    viewdir_agg: True # 视图聚合方法
+    chunk_size: 1000000 # 渲染块大小
     white_bkgd: False
     eval_depth: False
     eval_center: False # only for llff evaluation (same as MVSNeRF: https://github.com/apchenstu/mvsnerf/blob/1fdf6487389d0872dade614b3cea61f7b099406e/renderer.ipynb)
     sample_on_mask: False # only for ZJU-MoCap/DynamicCap
-    cas_config:
-        num: 2
+    cas_config: # 级联代价体 cascade cost volume 的参数 
+        num: 2 # 两阶段：coarse & fine. 所以下面都是两个参数的数组
         depth_inv: [True, False]
         volume_scale: [0.125, 0.5]
         volume_planes: [64, 8]
@@ -58,19 +59,19 @@ test_dataset:
 
 train:
     batch_size: 1
-    lr: 5e-4
-    weight_decay: 0.
+    lr: 5e-4 # 学习率
+    weight_decay: 0. # 权重衰减
     epoch: 300
-    scheduler:
+    scheduler: # 调度器
         type: 'exponential'
         gamma: 0.5
         decay_epochs: 50
-    batch_sampler: 'enerf'
+    batch_sampler: 'enerf' # 数据采样器
     collator: 'enerf' 
     sampler_meta:
         input_views_num: [2, 3, 4] 
         input_views_prob: [0.1, 0.8, 0.1]
-    num_workers: 4
+    num_workers: 4 # 工作进程数量
 
 test:
     batch_size: 1
@@ -80,8 +81,8 @@ test:
         input_views_num: [3] 
         input_views_prob: [1.]
 
-ep_iter: 1000
-save_ep: 5
-eval_ep: 5
+ep_iter: 1000 # 迭代次数
+save_ep: 5 # 保存间隔
+eval_ep: 5 # 评估间隔
 save_latest_ep: 1
-log_interval: 1
+log_interval: 1 # 日志间隔

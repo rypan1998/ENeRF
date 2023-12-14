@@ -13,15 +13,18 @@ class Network(nn.Module):
         super(Network, self).__init__()
         self.feature_net = FeatureNet()
         for i in range(cfg.enerf.cas_config.num):
-            if i == 0:
+            if i == 0: # coarse 阶段
                 cost_reg_l = MinCostRegNet(int(32 * (2**(-i))))
-            else:
+            else: # fine 阶段
                 cost_reg_l = CostRegNet(int(32 * (2**(-i))))
-            setattr(self, f'cost_reg_{i}', cost_reg_l)
+            setattr(self, f'cost_reg_{i}', cost_reg_l) # self.cost_reg_0/1 = cost_reg_l
             nerf_l = NeRF(feat_ch=cfg.enerf.cas_config.nerf_model_feat_ch[i]+3)
             setattr(self, f'nerf_{i}', nerf_l)
 
     def render_rays(self, rays, **kwargs):
+        '''
+        处理光线渲染：采样、特征提取和神经辐射场（NeRF）模型生成输出
+        '''
         level, batch, im_feat, feat_volume, nerf_model = kwargs['level'], kwargs['batch'], kwargs['im_feat'], kwargs['feature_volume'], kwargs['nerf_model']
         world_xyz, uvd, z_vals = utils.sample_along_depth(rays, N_samples=cfg.enerf.cas_config.num_samples[level], level=level)
         B, N_rays, N_samples = world_xyz.shape[:3]
@@ -43,6 +46,9 @@ class Network(nn.Module):
         return outputs
 
     def batchify_rays(self, rays, **kwargs):
+        '''
+        批量处理光线：将光线分成小批量，并对每个批量调用 render_rays() 函数，然后将结果合并
+        '''
         all_ret = {}
         chunk = cfg.enerf.chunk_size
         for i in range(0, rays.shape[1], chunk):
@@ -56,6 +62,9 @@ class Network(nn.Module):
 
 
     def forward_feat(self, x):
+        '''
+        前向传播特征提取：通过 FeatureNet 提取输入数据 x 的特征，并返回不同级别的特征。
+        '''
         B, S, C, H, W = x.shape
         x = x.view(B*S, C, H, W)
         feat2, feat1, feat0 = self.feature_net(x)
@@ -67,6 +76,9 @@ class Network(nn.Module):
         return feats
 
     def forward_render(self, ret, batch):
+        '''
+        前向传播渲染：似乎没有被调用
+        '''
         B, _, _, H, W = batch['src_inps'].shape
         rgb = ret['rgb'].reshape(B, H, W, 3).permute(0, 3, 1, 2)
         rgb = self.cnn_renderer(rgb)
@@ -74,6 +86,10 @@ class Network(nn.Module):
 
 
     def forward(self, batch):
+        '''
+        前向传播：通过多个级别的特征提取和渲染流程，生成最终的输出。
+        调用过程：当调用 self.network(batch) 时，实际上会调用 Network 类中的 __call__ 方法，而当前类继承自 torch.nn.Module 类，而 Module 类中的 __call__ 方法会调用模型类中定义的 forward 方法。
+        '''
         feats = self.forward_feat(batch['src_inps'])
         ret = {}
         depth, std, near_far = None, None, None

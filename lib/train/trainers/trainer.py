@@ -31,7 +31,7 @@ class Trainer(object):
 
     def to_cuda(self, batch):
         for k in batch:
-            if isinstance(batch[k], tuple) or isinstance(batch[k], list):
+            if isinstance(batch[k], tuple) or isinstance(batch[k], list):# 判断 batch[k] 是否为 tuple 或 list 类型
                 #batch[k] = [b.cuda() for b in batch[k]]
                 batch[k] = [b.to(self.device) for b in batch[k]]
             elif isinstance(batch[k], dict):
@@ -43,22 +43,22 @@ class Trainer(object):
 
     def train(self, epoch, data_loader, optimizer, recorder):
         max_iter = len(data_loader)
-        self.network.train()
+        self.network.train() # 设置训练模式（并不是前向传播）
         end = time.time()
         if self.global_step == 0:
             self.global_step = cfg.ep_iter * epoch
         for iteration, batch in enumerate(data_loader):
-            data_time = time.time() - end
+            data_time = time.time() - end # 模型加载时间
             iteration = iteration + 1
 
             batch = to_cuda(batch, self.device)
             batch['step'] = 0
-            output, loss, loss_stats, image_stats = self.network(batch)
+            output, loss, loss_stats, image_stats = self.network(batch) #! 前向传播（调用forward函数）
 
             # training stage: loss; optimizer; scheduler
             loss = loss.mean()
             optimizer.zero_grad()
-            loss.backward()
+            loss.backward() #! 反向传播
             torch.nn.utils.clip_grad_value_(self.network.parameters(), 40)
             optimizer.step()
 

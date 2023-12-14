@@ -33,18 +33,18 @@ class CostRegNet(nn.Module):
         self.feat_conv = nn.Sequential(nn.Conv3d(8, 8, 3, padding=1, bias=False))
 
     def forward(self, x):
-        conv0 = self.conv0(x)
-        conv2 = self.conv2(self.conv1(conv0))
-        conv4 = self.conv4(self.conv3(conv2))
-        x = self.conv6(self.conv5(conv4))
-        x = conv4 + self.conv7(x)
+        conv0 = self.conv0(x) # 8*H*W
+        conv2 = self.conv2(self.conv1(conv0)) # 16*H/2*W/2
+        conv4 = self.conv4(self.conv3(conv2)) # 32*H/4*W/4
+        x = self.conv6(self.conv5(conv4)) # 64*H/8*W/8
+        x = conv4 + self.conv7(x) # 32*H/4*W/4
         del conv4
-        x = conv2 + self.conv9(x)
+        x = conv2 + self.conv9(x) # 16*H/2*W/2
         del conv2
-        x = conv0 + self.conv11(x)
+        x = conv0 + self.conv11(x) # 8*H*W
         del conv0
-        feat = self.feat_conv(x)
-        depth = self.depth_conv(x)
+        feat = self.feat_conv(x) # 8*H*W
+        depth = self.depth_conv(x) # H*W
         return feat, depth.squeeze(1)
 
 
@@ -73,14 +73,16 @@ class MinCostRegNet(nn.Module):
         self.feat_conv = nn.Sequential(nn.Conv3d(8, 8, 3, padding=1, bias=False))
 
     def forward(self, x):
-        conv0 = self.conv0(x)
-        conv2 = self.conv2(self.conv1(conv0))
-        conv4 = self.conv4(self.conv3(conv2))
+        # coarse 阶段 x = 32，代表输入通道数 C
+        # D 代表“深度”，指数据在三维空间的一个维度。比如 (x,y,z) 中 z 就是指深度
+        conv0 = self.conv0(x) # B*32*D*H*W -> B*8*D*H*W
+        conv2 = self.conv2(self.conv1(conv0)) # B*16*D*H/2*W/2
+        conv4 = self.conv4(self.conv3(conv2)) # B*32*D*H/4*W/4
         x = conv4
-        x = conv2 + self.conv9(x)
+        x = conv2 + self.conv9(x) # B*16*D*H/2*W/2
         del conv2
-        x = conv0 + self.conv11(x)
+        x = conv0 + self.conv11(x) # B*8*D*H*W
         del conv0
-        feat = self.feat_conv(x)
-        depth = self.depth_conv(x)
-        return feat, depth.squeeze(1)
+        feat = self.feat_conv(x) # B*8*D*H*W
+        depth = self.depth_conv(x) # B*1*D*H*W
+        return feat, depth.squeeze(1) # 消除第 1 维的大小为 1 的元素（不为 1 则不消除）

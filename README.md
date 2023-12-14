@@ -14,6 +14,8 @@
 
 ### Set up the python environment
 
+**补充（2023年12月6日）**：`requirements.txt` 中的 `kornia` 自从 0.6.9 版本要求 `torch>=1.9.1`，所以我们必须指定 Kornia 的安装版本为 0.6.8，否则直接执行 `pip install -r` 这步会自动安装最新的 kornia 进而导致安装高版本的 torch，那么提前安装的 `torch1.9.0+cu111` 就没用了。
+
 ```
 conda create -n enerf python=3.8
 conda activate enerf
@@ -39,6 +41,11 @@ Put it into `$workspace/trained_model/enerf/dtu_pretrain/latest.pth`.
 Download the preprocessed [DTU training data](https://drive.google.com/file/d/1eDjh-_bxKKnEuz5h-HXS7EDJn59clx6V/view)
 and [Depth_raw](https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/cascade-stereo/CasMVSNet/dtu_data/dtu_train_hr/Depths_raw.zip) from original [MVSNet repo](https://github.com/YoYo000/MVSNet)
 and unzip. [MVSNeRF](https://github.com/apchenstu/mvsnerf) provide a [DTU example](https://1drv.ms/u/s!AjyDwSVHuwr8zhAAXh7x5We9czKj?e=oStQ48), please follow with the example's folder structure.
+
+**补充（2023年12月13日）**：下载好后各自解压，操作如下：
+1. 因为最后需要的文件夹是 `dtu` 而 `DTU example` 解压出来也是这个名，所以建议把它改成 `dtu_example` 防止起冲突；
+2. 把 `DTU training data` 解压出的 `mvs_training` 下面的 `dtu` 移动到上层目录；
+3. 把 `Depth_raw` 的内容解压后，和`dtu/Depths`文件夹合并；
 
 ```
 mv dtu_example.zip $workspace

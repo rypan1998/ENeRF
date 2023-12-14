@@ -17,6 +17,7 @@ if cfg.fix_random:
 
 
 def train(cfg, network):
+    # 1. 加载数据
     train_loader = make_data_loader(cfg,
                                     is_train=True,
                                     is_distributed=cfg.distributed,
@@ -25,12 +26,14 @@ def train(cfg, network):
         val_loader = None
     else:
         val_loader = make_data_loader(cfg, is_train=False)
+    # 2. 初始化
     trainer = make_trainer(cfg, network, train_loader)
     optimizer = make_optimizer(cfg, network)
     scheduler = make_lr_scheduler(cfg, optimizer)
     recorder = make_recorder(cfg)
     evaluator = make_evaluator(cfg)
 
+    # 3. 加载模型
     begin_epoch = load_model(network,
                              optimizer,
                              scheduler,
@@ -48,7 +51,7 @@ def train(cfg, network):
 
         train_loader.dataset.epoch = epoch
 
-        trainer.train(epoch, train_loader, optimizer, recorder)
+        trainer.train(epoch, train_loader, optimizer, recorder) # ! 训练开始
         scheduler.step()
 
         if (epoch + 1) % cfg.save_ep == 0 and cfg.local_rank == 0:
@@ -95,14 +98,14 @@ def synchronize():
     dist.barrier()
 
 def main():
-    if cfg.distributed:
+    if cfg.distributed: # 多卡并行设置
         cfg.local_rank = int(os.environ['RANK']) % torch.cuda.device_count()
         torch.cuda.set_device(cfg.local_rank)
         torch.distributed.init_process_group(backend="nccl",
                                              init_method="env://")
         synchronize()
 
-    network = make_network(cfg)
+    network = make_network(cfg) # 网络初始化
     if args.test:
         test(cfg, network)
     else:
@@ -110,7 +113,7 @@ def main():
     if cfg.local_rank == 0:
         print('Success!')
         print('='*80)
-    os.system('kill -9 {}'.format(os.getpid()))
+    os.system('kill -9 {}'.format(os.getpid())) # * 这个作者也真贴心，还知道清理下缓存
 
 
 if __name__ == "__main__":

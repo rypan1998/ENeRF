@@ -3,9 +3,12 @@ from .utils import *
 
 class FeatureNet(nn.Module):
     def __init__(self, norm_act=nn.BatchNorm2d):
+        '''
+        Multi-scale image feature extraction
+        '''
         super(FeatureNet, self).__init__()
         self.conv0 = nn.Sequential(
-                        ConvBnReLU(3, 8, 3, 1, 1, norm_act=norm_act),
+                        ConvBnReLU(3, 8, 3, 1, 1, norm_act=norm_act), # 输入3通道、输出8通道，卷积核3x3、步长1、padding为1
                         ConvBnReLU(8, 8, 3, 1, 1, norm_act=norm_act))
         self.conv1 = nn.Sequential(
                         ConvBnReLU(8, 16, 5, 2, 2, norm_act=norm_act),
@@ -25,14 +28,14 @@ class FeatureNet(nn.Module):
         return F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=True) + y
 
     def forward(self, x):
-        conv0 = self.conv0(x)
-        conv1 = self.conv1(conv0)
-        conv2 = self.conv2(conv1)
-        feat2 = self.toplayer(conv2)
-        feat1 = self._upsample_add(feat2, self.lat1(conv1))
-        feat0 = self._upsample_add(feat1, self.lat0(conv0))
-        feat1 = self.smooth1(feat1)
-        feat0 = self.smooth0(feat0)
+        conv0 = self.conv0(x) # H*W*3 -> H*W*8.
+        conv1 = self.conv1(conv0) # H/2*W/2*16
+        conv2 = self.conv2(conv1) # H/4*W/4*32
+        feat2 = self.toplayer(conv2) # F_{i,1}: H/4*W/4*32.
+        feat1 = self._upsample_add(feat2, self.lat1(conv1)) # H/2*W/2*32
+        feat0 = self._upsample_add(feat1, self.lat0(conv0)) # H*W*32
+        feat1 = self.smooth1(feat1) # F_{i,2}: H/2*W/2*16.
+        feat0 = self.smooth0(feat0) # F_{i,3}: H*W*8.
         return feat2, feat1, feat0
 
 class CNNRender(nn.Module):

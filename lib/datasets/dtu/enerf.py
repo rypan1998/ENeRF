@@ -21,31 +21,31 @@ class Dataset:
     def __init__(self, **kwargs):
         super(Dataset, self).__init__()
         self.data_root = os.path.join(cfg.workspace, kwargs['data_root'])
-        self.split = kwargs['split']
-        if 'scene' in kwargs:
+        self.split = kwargs['split'] # train or test
+        if 'scene' in kwargs: # 只针对某个场景进行 fine-tuning
             self.scenes = [kwargs['scene']]
         else:
             self.scenes = []
-        self.build_metas(kwargs['ann_file'])
-        self.depth_ranges = [425., 905.]
+        self.build_metas(kwargs['ann_file']) # 划分 dtu 数据集用于 train or test 分布的 txt 文件
+        self.depth_ranges = [425., 905.] # ! 深度范围不同数据集是不同的
 
     def build_metas(self, ann_file):
         scenes = [line.strip() for line in open(ann_file).readlines()]
-        dtu_pairs = torch.load('data/mvsnerf/pairs.th')
+        dtu_pairs = torch.load('data/mvsnerf/pairs.th') # 视图对
 
         self.scene_infos = {}
         self.metas = []
-        if len(self.scenes) != 0:
+        if len(self.scenes) != 0: # 只处理指定场景（fine-tuning 阶段）
             scenes = self.scenes
 
         for scene in scenes:
-            scene_info = {'ixts': [], 'exts': [], 'dpt_paths': [], 'img_paths': []}
+            scene_info = {'ixts': [], 'exts': [], 'dpt_paths': [], 'img_paths': []} # 内外参、深度图路径和图像路径
             for i in range(49):
                 cam_path = os.path.join(self.data_root, 'Cameras/train/{:08d}_cam.txt'.format(i))
-                ixt, ext, _ = data_utils.read_cam_file(cam_path)
-                ext[:3, 3] = ext[:3, 3]
-                ixt[:2] = ixt[:2] * 4
-                dpt_path = os.path.join(self.data_root, 'Depths/{}/depth_map_{:04d}.pfm'.format(scene, i))
+                ixt, ext, _ = data_utils.read_cam_file(cam_path) # 内外参
+                ext[:3, 3] = ext[:3, 3] # 提取前三行的第四列，即平移向量，代表相机在世界坐标系中的位置
+                ixt[:2] = ixt[:2] * 4 # 提取前两行，即 fx,fy,cx,cy，乘以4可能是为了调整分辨率
+                dpt_path = os.path.join(self.data_root, 'Depths/{}/depth_map_{:04d}.pfm'.format(scene, i)) # 文件夹不带 train 的原始图
                 img_path = os.path.join(self.data_root, 'Rectified/{}_train/rect_{:03d}_3_r5000.png'.format(scene, i+1))
                 scene_info['ixts'].append(ixt.astype(np.float32))
                 scene_info['exts'].append(ext.astype(np.float32))
@@ -62,25 +62,25 @@ class Dataset:
                 train_ids = dtu_pairs['dtu_train']
                 test_ids = dtu_pairs['dtu_val']
             scene_info.update({'train_ids': train_ids, 'test_ids': test_ids})
-            self.scene_infos[scene] = scene_info
+            self.scene_infos[scene] = scene_info # 保存每个场景的数据集信息
 
             cam_points = np.array([np.linalg.inv(scene_info['exts'][i])[:3, 3] for i in train_ids])
-            for tar_view in test_ids:
-                cam_point = np.linalg.inv(scene_info['exts'][tar_view])[:3, 3]
-                distance = np.linalg.norm(cam_points - cam_point[None], axis=-1)
-                argsorts = distance.argsort()
-                argsorts = argsorts[1:] if tar_view in train_ids else argsorts
+            for tar_view in test_ids: # 为每个测试视图 tar_view 选择最相关的训练视图（距离最近）
+                cam_point = np.linalg.inv(scene_info['exts'][tar_view])[:3, 3] # tar_view 的相机位置
+                distance = np.linalg.norm(cam_points - cam_point[None], axis=-1) # tar_view 和所有训练视图相机位置的距离
+                argsorts = distance.argsort() # 对距离进行排序，以找到最近的训练视图
+                argsorts = argsorts[1:] if tar_view in train_ids else argsorts # 如果 tar_view 也在训练视图中，那么 argsorts[0] 一定是它自己，所以需要排除
                 input_views_num = cfg.enerf.train_input_views[1] + 1 if self.split == 'train' else cfg.enerf.test_input_views
-                src_views = [train_ids[i] for i in argsorts[:input_views_num]]
+                src_views = [train_ids[i] for i in argsorts[:input_views_num]] # 选择一定数量的较近的训练视图作为源视图
                 self.metas += [(scene, tar_view, src_views)]
 
     def __getitem__(self, index_meta):
         index, input_views_num = index_meta
         scene, tar_view, src_views = self.metas[index]
         if self.split == 'train':
-            if random.random() < 0.1:
+            if random.random() < 0.1: # 有（较小）概率将 tar_view 添加到源视图中
                 src_views = src_views + [tar_view]
-            src_views = random.sample(src_views[:input_views_num+1], input_views_num)
+            src_views = random.sample(src_views[:input_views_num+1], input_views_num) # 随机选择
         scene_info = self.scene_infos[scene]
 
         tar_img = np.array(imageio.imread(scene_info['img_paths'][tar_view])) / 255.

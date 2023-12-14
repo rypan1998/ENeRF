@@ -354,6 +354,9 @@ def load_model(net,
                model_dir,
                resume=True,
                epoch=-1):
+    '''
+    在训练过程中加载已保存的模型和优化器状态，以便从上次训练中断的地方继续进行训练。
+    '''
     if not resume:
         os.system('rm -rf {}'.format(model_dir))
 
