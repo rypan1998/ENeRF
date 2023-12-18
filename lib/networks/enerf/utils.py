@@ -100,8 +100,8 @@ def get_depth_values(batch, D, level, device, depth, std, near_far):
     H, W = batch['src_inps'].shape[-2:]
     v_s = cfg.enerf.cas_config.volume_scale[level]
     H, W = int(H * v_s), int(W * v_s)
-    if depth is None:
-        if cfg.enerf.cas_config.depth_inv[level]:
+    if depth is None: # 未定义：根据近远范围和样本数生成深度值
+        if cfg.enerf.cas_config.depth_inv[level]: # 逆深度空间
             disp_values = 1./batch['near_far'][:, :1] + (torch.linspace(0., 1., steps=D, device=device, dtype=torch.float32).view(1, -1).repeat(B, 1)) * \
                 (1./batch['near_far'][:, 1:] - 1./batch['near_far'][:, :1])
             depth_values = 1./disp_values
@@ -109,7 +109,7 @@ def get_depth_values(batch, D, level, device, depth, std, near_far):
             depth_values = batch['near_far'][:, :1] + (batch['near_far'][:, 1:] - batch['near_far'][:, :1]) * \
             torch.linspace(0., 1., steps=D, device=device, dtype=torch.float32).view(1, -1).repeat(B, 1)
         depth_values = depth_values.view(B, D, 1, 1).repeat(1, 1, H, W)
-    else:
+    else: # 已定义：根据上一级别的深度和标准差调整当前级别的深度范围
         up_scale = cfg.enerf.cas_config.volume_scale[level] / cfg.enerf.cas_config.volume_scale[level-1]
         if up_scale != 1.:
             depth = F.interpolate(depth[:, None], None, scale_factor=up_scale, recompute_scale_factor=True, align_corners=True, mode='bilinear')[:, 0]
@@ -148,7 +148,7 @@ def get_depth_values(batch, D, level, device, depth, std, near_far):
     near_far = depth_values[:, [0, -1], :, :].detach()
     if cfg.enerf.cas_config.depth_inv[level]:
         near_far = 1 / torch.clamp_min(near_far, 1e-6)
-    return depth_values.contiguous() , near_far
+    return depth_values.contiguous() , near_far # 连续的深度值、调整后的远近范围
 
 def get_depth_values_composite(batch, D, level, device, layer_inter, layer_idx):
     B = len(batch['src_inps'])
@@ -173,7 +173,7 @@ def get_depth_values_composite(batch, D, level, device, layer_inter, layer_idx):
                 (1./batch_near_far[:, 1:] - 1./batch_near_far[:, :1])
             depth_values = 1./disp_values
         else:
-            depth_values = batch_near_far[:, :1] + (batch_near_far[:, 1:] - batch_near_far_[:, :1]) * \
+            depth_values = batch_near_far[:, :1] + (batch_near_far[:, 1:] - batch_near_far[:, :1]) * \
             torch.linspace(0., 1., steps=D, device=device, dtype=torch.float32).view(1, -1).repeat(B, 1)
         depth_values = depth_values.view(B, D, 1, 1).repeat(1, 1, H, W)
     else:
@@ -323,15 +323,15 @@ def build_feature_volume(feature, batch, D, depth, std, near_far, level):
     B, S, C, H, W = feature.shape
     depth_values, near_far = get_depth_values(batch, D, level, feature.device, depth, std, near_far)
 
-    proj_mats = get_proj_mats(batch, src_scale=cfg.enerf.cas_config.im_feat_scale[level], tar_scale=cfg.enerf.cas_config.volume_scale[level])
+    proj_mats = get_proj_mats(batch, src_scale=cfg.enerf.cas_config.im_feat_scale[level], tar_scale=cfg.enerf.cas_config.volume_scale[level]) # tar_view 和 src_view 之间的变换矩阵
 
     volume_sum = 0
     volume_sq_sum = 0
     count = 0
-    for s in range(S):
+    for s in range(S): # 视图数量
         feature_s = feature[:, s]
         proj_mat = proj_mats[:, s]
-        warped_volume, _ = homo_warp(feature_s, proj_mat, depth_values)
+        warped_volume, _ = homo_warp(feature_s, proj_mat, depth_values) # feat_src → feat_tar
         # warped_rgb, _ = homo_warp(rgb_s, proj_mat, depth_values, pad)
 
         volume_sum = volume_sum + warped_volume
@@ -343,6 +343,7 @@ def build_feature_volume(feature, batch, D, depth, std, near_far, level):
         # count +=  mask[:, None].float()
     # count = 1./(count+1e-8)
     volume_variance = volume_sq_sum.div_(S).sub_(volume_sum.div_(S).pow_(2))
+    # * 平方和均值 和 平均值平方 的差值：每个像素在不同视图上的特征值的方差，用于衡量特征在不同视图上的变化程度。
     # rgb_volume = torch.cat(rgb_volume, dim=1)
     # feature_volume = torch.cat((rgb_volume, volume_variance), dim=1)
     feature_volume = volume_variance
