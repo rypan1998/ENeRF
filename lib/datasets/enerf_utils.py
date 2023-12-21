@@ -3,6 +3,9 @@ import cv2
 import numpy as np
 
 def sample_patch(num_patch, patch_size, H, W, msk_sample):
+    '''
+    在图像中随机采样一个区域（patch）。首先，根据掩码（mask）确定前景区域，然后在这些区域随机采样。如果掩码为空，则在整个图像中随机采样。
+    '''
     half_patch_size = patch_size // 2
     if msk_sample.sum() > 0:
         num_fg_patch = num_patch
@@ -24,15 +27,15 @@ def sample_patch(num_patch, patch_size, H, W, msk_sample):
 
 def build_rays(tar_img, tar_ext, tar_ixt, tar_msk, level, split):
     scale = cfg.enerf.cas_config.render_scale[level]
-    if scale != 1.:
+    if scale != 1.: # 根据配置中的缩放比例调整目标图像和掩码的大小
         tar_img = cv2.resize(tar_img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         tar_msk = cv2.resize(tar_msk, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
         tar_ixt = tar_ixt.copy()
         tar_ixt[:2] *= scale
     H, W = tar_img.shape[:2]
     c2w = np.linalg.inv(tar_ext)
-    if split == 'train' and not cfg.enerf.cas_config.train_img[level]:
-        if cfg.enerf.sample_on_mask: # 313
+    if split == 'train' and not cfg.enerf.cas_config.train_img[level]: # 基于随机采样的像素生成光线
+        if cfg.enerf.sample_on_mask: # 313 仅在 zju_mocap 数据集中使用
             msk_sample = tar_msk
             num_fg_rays = int(min(cfg.enerf.cas_config.num_rays[level]*0.75, tar_msk.sum()*0.95))
             non_zero = msk_sample.nonzero()
@@ -58,7 +61,7 @@ def build_rays(tar_img, tar_ext, tar_ixt, tar_msk, level, split):
         rays = np.concatenate((rays_o, XYZ, X[..., None], Y[..., None]), axis=-1)
         rgb = tar_img[Y, X]
         msk = tar_msk[Y, X]
-    else:
+    else: # 基于整个图像的像素生成光线
         rays_o = c2w[:3, 3][None, None]
         X, Y = np.meshgrid(np.arange(W), np.arange(H))
         XYZ = np.concatenate((X[:, :, None], Y[:, :, None], np.ones_like(X[:, :, None])), axis=-1)

@@ -23,11 +23,12 @@ class Network(nn.Module):
 
     def render_rays(self, rays, **kwargs):
         '''
-        处理光线渲染：采样、特征提取和神经辐射场（NeRF）模型生成输出
+        处理光线渲染：采样、特征提取和 NeRF 模型生成输出
         '''
         level, batch, im_feat, feat_volume, nerf_model = kwargs['level'], kwargs['batch'], kwargs['im_feat'], kwargs['feature_volume'], kwargs['nerf_model']
         world_xyz, uvd, z_vals = utils.sample_along_depth(rays, N_samples=cfg.enerf.cas_config.num_samples[level], level=level)
         B, N_rays, N_samples = world_xyz.shape[:3]
+        # 如果图像数据在输入神经网络之前被缩放和归一化处理了，那么unpreprocess函数就可以将这些变换逆转回去，以便于图像显示或后续处理
         rgbs = utils.unpreprocess(batch['src_inps'], render_scale=cfg.enerf.cas_config.render_scale[level])
         up_feat_scale = cfg.enerf.cas_config.render_scale[level] / cfg.enerf.cas_config.im_ibr_scale[level]
         if up_feat_scale != 1.:
@@ -65,13 +66,13 @@ class Network(nn.Module):
         '''
         前向传播特征提取：通过 FeatureNet 提取输入数据 x 的特征，并返回不同级别的特征。
         '''
-        B, S, C, H, W = x.shape
-        x = x.view(B*S, C, H, W)
+        B, S, C, H, W = x.shape # S 指序列长度
+        x = x.view(B*S, C, H, W) # 将 B 和 S 合并，从而让 feature_net 能独立处理每个图像
         feat2, feat1, feat0 = self.feature_net(x)
-        feats = {
-                'level_2': feat0.reshape((B, S, feat0.shape[1], H, W)),
-                'level_1': feat1.reshape((B, S, feat1.shape[1], H//2, W//2)),
-                'level_0': feat2.reshape((B, S, feat2.shape[1], H//4, W//4)),
+        feats = { # 这里手动指定了新的分辨率，而不是使用 feat 的分辨率，只保留了 feat 的通道数
+                'level_2': feat0.reshape((B, S, feat0.shape[1], H, W)), # H*W*8
+                'level_1': feat1.reshape((B, S, feat1.shape[1], H//2, W//2)), # H/2*W/2*16
+                'level_0': feat2.reshape((B, S, feat2.shape[1], H//4, W//4)), # H/4*W/4*32
                 }
         return feats
 
@@ -95,9 +96,9 @@ class Network(nn.Module):
         depth, std, near_far = None, None, None
         for i in range(cfg.enerf.cas_config.num):
             feature_volume, depth_values, near_far = utils.build_feature_volume(
-                    feats[f'level_{i}'],
+                    feats[f'level_{i}'], # level_0&1 for cost volume, level_2 for NeRF
                     batch,
-                    D=cfg.enerf.cas_config.volume_planes[i],
+                    D=cfg.enerf.cas_config.volume_planes[i], # 深度平面数量
                     depth=depth,
                     std=std,
                     near_far=near_far,

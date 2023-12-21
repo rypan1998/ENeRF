@@ -8,21 +8,20 @@ class NeRF(nn.Module):
         """
         """
         super(NeRF, self).__init__()
-        self.hid_n = hid_n
-        self.agg = Agg(feat_ch)
-        self.lr0 = nn.Sequential(nn.Linear(8+16, hid_n),
-                                 nn.ReLU()) # (8+16)*64
+        self.hid_n = hid_n # 隐藏层大小（MLP 层数量）
+        self.agg = Agg(feat_ch) # 特征聚合：把不同视图的特征，考虑视角和全局信息，生成一个“综合特征”
+        self.lr0 = nn.Sequential(nn.Linear(8+16, hid_n), # (8+16) -> 64. output = input * A^T + b
+                                 nn.ReLU())
         self.lrs = nn.ModuleList([
             nn.Sequential(nn.Linear(hid_n, hid_n), nn.ReLU()) for i in range(0)
-        ]) #? range 为 0，所以这是个空迭代，lrs 容器为空（为之后预留的？还是可以个性化修改？）
-        # softplus(x) = log(1 + exp(x)). 把 x 非线性变换到 (0, +∞)
-        self.sigma = nn.Sequential(nn.Linear(hid_n, 1), nn.Softplus())
+        ]) # 一系列额外的线性层，目前为空，可用于增加模型复杂度
+        self.sigma = nn.Sequential(nn.Linear(hid_n, 1), nn.Softplus()) # softplus(x) = log(1 + exp(x)). 把 x 非线性变换到 (0, +∞)
         self.color = nn.Sequential(
                 nn.Linear(64+24+feat_ch+4, hid_n),
                 nn.ReLU(),
                 nn.Linear(hid_n, 1),
                 nn.ReLU())
-        self.lr0.apply(weights_init) # 权重初始化
+        self.lr0.apply(weights_init)
         self.lrs.apply(weights_init)
         self.sigma.apply(weights_init)
         self.color.apply(weights_init)
@@ -37,7 +36,6 @@ class NeRF(nn.Module):
             x = self.lrs[i](x)
         sigma = self.sigma(x) # 密度 σ
 
-        #? 下面得到颜色的过程挺抽象的
         x = torch.cat((x, vox_img_feat), dim=-1)
         x = x.view(B, -1, 1, x.shape[-1]).repeat(1, 1, S, 1) # 将 x 的形状修改为 (B, -1, 1, x.shape[-1])，并进行重复复制 S 次
         x = torch.cat((x, img_feat_rgb_dir), dim=-1)

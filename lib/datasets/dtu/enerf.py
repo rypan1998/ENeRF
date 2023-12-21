@@ -91,11 +91,11 @@ class Dataset:
             tar_dpt = cv2.resize(tar_dpt, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_NEAREST)
             tar_dpt = tar_dpt[44:556, 80:720]
             tar_mask = (tar_dpt > 0.).astype(np.uint8)
-        else:
+        else: # train mode: 使用全一矩阵作为 depth 和 mask
             tar_dpt = np.ones_like(tar_img)
             tar_mask = np.ones_like(tar_img)
 
-        src_inps, src_exts, src_ixts = self.read_src(scene_info, src_views)
+        src_inps, src_exts, src_ixts = self.read_src(scene_info, src_views) # 源视图的图像（经过处理）、相机参数
 
         ret = {'src_inps': src_inps,
                'src_exts': src_exts,

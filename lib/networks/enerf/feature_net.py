@@ -31,11 +31,11 @@ class FeatureNet(nn.Module):
         conv0 = self.conv0(x) # H*W*3 -> H*W*8.
         conv1 = self.conv1(conv0) # H/2*W/2*16
         conv2 = self.conv2(conv1) # H/4*W/4*32
-        feat2 = self.toplayer(conv2) # F_{i,1}: H/4*W/4*32.
+        feat2 = self.toplayer(conv2) # H/4*W/4*32
         feat1 = self._upsample_add(feat2, self.lat1(conv1)) # H/2*W/2*32
         feat0 = self._upsample_add(feat1, self.lat0(conv0)) # H*W*32
-        feat1 = self.smooth1(feat1) # F_{i,2}: H/2*W/2*16.
-        feat0 = self.smooth0(feat0) # F_{i,3}: H*W*8.
+        feat1 = self.smooth1(feat1) # H/2*W/2*16
+        feat0 = self.smooth0(feat0) # H*W*8
         return feat2, feat1, feat0
 
 class CNNRender(nn.Module):

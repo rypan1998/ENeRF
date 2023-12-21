@@ -33,11 +33,14 @@ class ConvBnReLU3D(nn.Module):
         return self.relu(self.bn(self.conv(x)))
 
 def get_proj_mats(batch, src_scale, tar_scale):
+    '''
+    计算源视图到目标视图的转换矩阵，这些矩阵在后续的图像变换和特征提取过程中非常重要
+    '''
     B, S_V, C, H, W = batch['src_inps'].shape
     src_ext = batch['src_exts']
     src_ixt = batch['src_ixts'].clone()
     src_ixt[:, :, :2] *= src_scale
-    src_projs = src_ixt @ src_ext[:, :, :3]
+    src_projs = src_ixt @ src_ext[:, :, :3] # P=K*[R|t]
 
     tar_ext = batch['tar_ext']
     tar_ixt = batch['tar_ixt'].clone()
@@ -45,14 +48,14 @@ def get_proj_mats(batch, src_scale, tar_scale):
     tar_projs = tar_ixt @ tar_ext[:, :3]
     tar_ones = torch.zeros((B, 1, 4)).to(tar_projs.device)
     tar_ones[:, :, 3] = 1
-    tar_projs = torch.cat((tar_projs, tar_ones), dim=1)
+    tar_projs = torch.cat((tar_projs, tar_ones), dim=1) # 添加[0,0,0,1]齐次行
     tar_projs_inv = torch.inverse(tar_projs)
 
     src_projs = src_projs.view(B, S_V, 3, 4)
     tar_projs_inv = tar_projs_inv.view(B, 1, 4, 4)
 
     proj_mats = src_projs @ tar_projs_inv
-    return proj_mats
+    return proj_mats # src_view -> tar_view 的投影矩阵
 
 def homo_warp(src_feat, proj_mat, depth_values):
     B, D, H_T, W_T = depth_values.shape
@@ -62,14 +65,15 @@ def homo_warp(src_feat, proj_mat, depth_values):
     R = proj_mat[:, :, :3] # (B, 3, 3)
     T = proj_mat[:, :, 3:] # (B, 3, 1)
     # create grid from the ref frame
+    # 创建参考帧网格，用于映射像素位置
     ref_grid = create_meshgrid(H_T, W_T, normalized_coordinates=False,
                                device=device) # (1, H, W, 2)
     ref_grid = ref_grid.permute(0, 3, 1, 2) # (1, 2, H, W)
     ref_grid = ref_grid.reshape(1, 2, H_T*W_T) # (1, 2, H*W)
     ref_grid = ref_grid.expand(B, -1, -1) # (B, 2, H*W)
     ref_grid = torch.cat((ref_grid, torch.ones_like(ref_grid[:,:1])), 1) # (B, 3, H*W)
-    ref_grid_d = ref_grid.repeat(1, 1, D) # (B, 3, D*H*W)
-    src_grid_d = R @ ref_grid_d + T/depth_values.view(B, 1, D*H_T*W_T)
+    ref_grid_d = ref_grid.repeat(1, 1, D) # (B, 3, D*H*W) 重复参考帧网格以匹配深度层次的数量
+    src_grid_d = R @ ref_grid_d + T/depth_values.view(B, 1, D*H_T*W_T) # 参考帧网格 -> 源视图空间
     del ref_grid_d, ref_grid, proj_mat, R, T, depth_values # release (GPU) memory
 
     # project negative depth pixels to somewhere outside the image
@@ -96,6 +100,9 @@ def homo_warp(src_feat, proj_mat, depth_values):
 
 
 def get_depth_values(batch, D, level, device, depth, std, near_far):
+    '''
+    生成每个像素点在不同深度层级的深度值，这些值会用于后续的体积渲染和特征提取过程
+    '''
     B = len(batch['src_inps'])
     H, W = batch['src_inps'].shape[-2:]
     v_s = cfg.enerf.cas_config.volume_scale[level]
@@ -323,10 +330,10 @@ def build_feature_volume(feature, batch, D, depth, std, near_far, level):
     B, S, C, H, W = feature.shape
     depth_values, near_far = get_depth_values(batch, D, level, feature.device, depth, std, near_far)
 
-    proj_mats = get_proj_mats(batch, src_scale=cfg.enerf.cas_config.im_feat_scale[level], tar_scale=cfg.enerf.cas_config.volume_scale[level]) # tar_view 和 src_view 之间的变换矩阵
+    proj_mats = get_proj_mats(batch, src_scale=cfg.enerf.cas_config.im_feat_scale[level], tar_scale=cfg.enerf.cas_config.volume_scale[level])
 
-    volume_sum = 0
-    volume_sq_sum = 0
+    volume_sum = 0 # 体积求和
+    volume_sq_sum = 0 # 平方求和
     count = 0
     for s in range(S): # 视图数量
         feature_s = feature[:, s]
@@ -391,7 +398,7 @@ def build_rays_st(depth, std, batch, training, near_far, level, up_scale=2.):
 def build_rays(depth, std, batch, training, near_far, level, up_scale=2.):
     device = depth.device
     up_scale = cfg.enerf.cas_config.render_scale[level] / cfg.enerf.cas_config.volume_scale[level]
-    if up_scale != 1.:
+    if up_scale != 1.: # 调整 L 和 S
         depth = F.interpolate(depth[:, None], scale_factor=up_scale, mode='bilinear', align_corners=True)[:, 0]
         std = F.interpolate(std[:, None], scale_factor=up_scale, mode='bilinear', align_corners=True)[:, 0]
         near_far = F.interpolate(near_far, scale_factor=up_scale, mode='bilinear', align_corners=True)
@@ -407,35 +414,36 @@ def build_rays(depth, std, batch, training, near_far, level, up_scale=2.):
         mask = rays_near_far[..., 1] < near_far[:, 1]
         rays_near_far[..., 1][mask] = near_far[:, 1][mask]
     else:
-        rays_near_far = torch.stack([depth-std, depth+std], dim=-1)
-        mask = rays_near_far[..., 0] < near_far[:, 0]
-        rays_near_far[..., 0][mask] = near_far[:, 0][mask]
+        rays_near_far = torch.stack([depth-std, depth+std], dim=-1) # \hat{U}(u,v)
+        mask = rays_near_far[..., 0] < near_far[:, 0] # 标记：估计的最近距离 < 已知最近距离 的光线
+        rays_near_far[..., 0][mask] = near_far[:, 0][mask] # 调整为：已知最近距离
         mask = rays_near_far[..., 1] > near_far[:, 1]
         rays_near_far[..., 1][mask] = near_far[:, 1][mask]
-    near_far = near_far.permute(0, 2, 3, 1)
+    near_far = near_far.permute(0, 2, 3, 1) # (B, D, H, W) -> (B, H, W, D)
     rays = batch[f'rays_{level}']
-    uv = rays[:, :, 6:].long()
+    uv = rays[:, :, 6:].long() # 针对每个像素位置，调整远近范围
     rays_near_far = torch.stack([rays_near_far[i][uv[i][:, 1], uv[i][:, 0]] for i in range(len(rays_near_far))])
     near_far = torch.stack([near_far[i][uv[i][:, 1], uv[i][:, 0]] for i in range(len(near_far))])
     rays = torch.cat([rays, rays_near_far, near_far], dim=-1)
     return rays
 
 def sample_along_depth(rays, N_samples, level):
-    ray_o, ray_d, uv = rays[..., :3], rays[..., 3:6], rays[..., 6:8]
-    ray_near, ray_far, near, far = rays[..., 8:9], rays[..., 9:10], rays[..., 10:11], rays[..., 11:12]
-    if N_samples == 1:
+    """光线上采样点的世界坐标、uvd、z_vals（从 ray_near 开始）"""
+    ray_o, ray_d, uv = rays[..., :3], rays[..., 3:6], rays[..., 6:8] # 原点、方向、uv坐标
+    ray_near, ray_far, near, far = rays[..., 8:9], rays[..., 9:10], rays[..., 10:11], rays[..., 11:12] # 光线深度置信区间、场景远近范围
+    if N_samples == 1: # 均匀采样 N_samples 个点，得到深度值 z_vals
         z_vals =  ray_near + (ray_far - ray_near) * 0.5
     else:
         z_vals =  ray_near + (ray_far - ray_near) * torch.linspace(0., 1., N_samples, device=rays.device)[None, None]
     if cfg.enerf.cas_config.depth_inv[level]:
         world_xyz = ray_o[..., None, :] + ray_d[..., None, :] * (1/torch.clamp_min(z_vals[..., None], 1e-6))
     else:
-        world_xyz = ray_o[..., None, :] + ray_d[..., None, :] * (z_vals[..., None])
+        world_xyz = ray_o[..., None, :] + ray_d[..., None, :] * (z_vals[..., None]) # 向量加法得到世界坐标
 
     if cfg.enerf.cas_config.depth_inv[level]:
         d = (near - z_vals) / torch.clamp_min(near - far, 1e-6)
     else:
-        d = (z_vals - near) / torch.clamp_min(far - near, 1e-6)
+        d = (z_vals - near) / torch.clamp_min(far - near, 1e-6) # 深度
     uvd = torch.cat([uv[..., None, :].repeat(1, 1, N_samples, 1), d[..., None]], dim=-1)
     if z_vals.max() > 1e5:
         __import__('ipdb').set_trace()
@@ -455,6 +463,8 @@ def get_norm_space(xyd, feature_volume, batch, N_samples, rays, rgbs, training):
 
 
 def get_vox_feat(ndc_xyz, feature_volume):
+    """从一个体积特征（volume feature）中提取特定位置的特征值"""
+    # grid_sample 先把 ndc(Normalized Device Coordinate) 从 (0,1) -> (-1,1)，然后在给定的 3D 网格坐标中对输入的体积特征进行采样，输出 ndc_xyz 的特征值
     feature = F.grid_sample(feature_volume, ndc_xyz[:, None, None]*2. - 1., align_corners=True)[:, :, 0, 0].permute((0, 2, 1))
     return feature
     # B, S, C, H, W = rgbs.shape
@@ -582,40 +592,44 @@ def raw2outputs(raw, z_vals, white_bkgd=False):
         weights: [num_rays, num_samples]. Weights assigned to each sampled color.
         depth_map: [num_rays]. Estimated distance to object.
     """
-    raw2alpha = lambda raw: 1.-torch.exp(-raw)
+    raw2alpha = lambda raw: 1.-torch.exp(-raw) # α 代表光线在每个采样点的吸收和穿透
     alpha = raw2alpha(raw[...,3])  # [N_rays, N_samples]
     rgb = raw[..., :3]
     # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
     T = torch.cumprod(1.-alpha+1e-10, dim=-1)[..., :-1]
     T = torch.cat([torch.ones_like(alpha[..., 0:1]), T], dim=-1)
-    weights = alpha * T
+    weights = alpha * T # 累积权重：光线在到达该点之前已经穿过的介质
 
     rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
-    if z_vals is not None:
+    if z_vals is not None: # 加权平均法计算光线的预估深度
         weights = F.softmax(weights, dim=-1)
         depth_map = torch.sum(weights*z_vals.detach(), -1)
     else:
         depth_map = None
 
-    if white_bkgd:
+    if white_bkgd: # 将未吸收的光线颜色与白色背景混合
         acc_map = torch.sum(weights, -1)
         rgb_map = rgb_map + (1.-acc_map[...,None])
 
     return {'rgb': rgb_map, 'depth': depth_map, 'weights': weights}
 
 def unpreprocess(data, shape=(1, 1, 3, 1, 1), render_scale=1.):
+    """调整图像像素值范围和分辨率"""
     device = data.device
     # mean = torch.tensor([-0.485/0.229, -0.456/0.224, -0.406 / 0.225]).view(*shape).to(device)
     # std = torch.tensor([1 / 0.229, 1 / 0.224, 1 / 0.225]).view(*shape).to(device)
-    img = data * 0.5 + 0.5
+    img = data * 0.5 + 0.5 # 把图像数据从 [-1,1] （神经网络训练使用） 转换回 [0,1]
     B, S, C, H, W = img.shape
-    img = F.interpolate(img.reshape(B*S, C, H, W), scale_factor=render_scale, align_corners=True, mode='bilinear', recompute_scale_factor=True).reshape(B, S, C, int(H*render_scale), int(W*render_scale))
+    img = F.interpolate(img.reshape(B*S, C, H, W), scale_factor=render_scale, align_corners=True, mode='bilinear', recompute_scale_factor=True).reshape(B, S, C, int(H*render_scale), int(W*render_scale)) # 根据 render_scale 调整图像分辨率
     return img
 
 def depth_regression(depth_prob, depth_values, level, batch):
+    '''
+    get \hat{L}(u,v) & \hat{S}(u,v)
+    '''
     H, W = depth_values.shape[2:]
 
-    if level == -1:
+    if level == -1: # 理论上取值为 0/1，不会是 -1，下面执行了特定初始化和配置
         inter = 9
         D = depth_values.shape[1]
         argsort = depth_prob.argsort(dim=1)
@@ -659,9 +673,9 @@ def depth_regression(depth_prob, depth_values, level, batch):
     prob_volume = F.softmax(depth_prob, 1)
     if cfg.enerf.cas_config.depth_inv[level]:
         depth_values = 1./torch.clamp_min(depth_values, 1e-6) # to disp
-    depth = torch.sum(prob_volume * depth_values, 1)
+    depth = torch.sum(prob_volume * depth_values, 1) # \hat{L}(u,v)
     var =  (prob_volume * (depth_values - depth.unsqueeze(1))**2).sum(1)
-    std = torch.clamp_min(var, 1e-10).sqrt()
+    std = torch.clamp_min(var, 1e-10).sqrt() # \hat{S}(u,v)
     # std = var .sqrt()
 
     # vis_prob(std, depth, prob_volume, depth_values)
@@ -696,24 +710,24 @@ def get_img_feat(xyz, img_feat_rgb, batch, training, level):# B * N * S * (11+4)
     render_scale = cfg.enerf.cas_config.render_scale[level]
 
     ret_feat = []
-    for i in range(S):
-        xyz_img = (xyz @ batch['src_exts'][:, i].transpose(-1, -2))[..., :3]
+    for i in range(S): # 遍历每个视图
+        xyz_img = (xyz @ batch['src_exts'][:, i].transpose(-1, -2))[..., :3] # 每个视图的世界坐标
         ixt_img = batch['src_ixts'][:, i].clone()
         ixt_img[:, :2] *= render_scale
         xyz_img = xyz_img[..., :3] @ ixt_img.transpose(-1, -2)
-        grid = xyz_img[..., :2] / torch.clamp_min(xyz_img[..., 2:], 1e-6)
+        grid = xyz_img[..., :2] / torch.clamp_min(xyz_img[..., 2:], 1e-6) # 网格坐标
         grid[..., 0], grid[..., 1] = (grid[..., 0]) / (W - 1), (grid[..., 1]) / (H - 1)
         grid = grid * 2. - 1.
-        feat = F.grid_sample(img_feat_rgb[:, i], grid[:, None], align_corners=True, mode='bilinear', padding_mode='border').permute(0, 2, 3, 1)[:, 0]
+        feat = F.grid_sample(img_feat_rgb[:, i], grid[:, None], align_corners=True, mode='bilinear', padding_mode='border').permute(0, 2, 3, 1)[:, 0] # 网格采样获取特征
         tar_cam_xyz = batch['tar_ext'].inverse()[:, :3, 3]
         src_cam_xyz = batch['src_exts'][:, i].inverse()[:, :3, 3]
-        tar_diff = xyz[..., :3] - tar_cam_xyz[:, None]
-        src_diff = xyz[..., :3] - src_cam_xyz[:, None]
+        tar_diff = xyz[..., :3] - tar_cam_xyz[:, None] # 目标差异：每个采样点到目标相机位置的方向向量。
+        src_diff = xyz[..., :3] - src_cam_xyz[:, None] # 源差异：每个采样点到源相机位置的方向向量。
 
         tar_diff = tar_diff / (torch.norm(tar_diff, dim=-1, keepdim=True) + 1e-6)
         src_diff = src_diff / (torch.norm(src_diff, dim=-1, keepdim=True) + 1e-6)
 
-        ray_diff = tar_diff - src_diff
+        ray_diff = tar_diff - src_diff # 从源视图到目标视图的方向变化。这种差异有助于捕捉从不同角度观察场景时的视角变化
         ray_diff_norm = torch.norm(ray_diff, dim=-1, keepdim=True)
 
         ray_diff_dot = torch.sum(tar_diff * src_diff, dim=-1, keepdim=True)
